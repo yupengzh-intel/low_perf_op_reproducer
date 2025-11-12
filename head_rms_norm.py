@@ -3,11 +3,18 @@ import habana_frameworks.torch as ht
 import random
 import math
 
-class ExpOp:
+class HeadRMSNormOp:
 
     def __init__(self):
-        self.batch_size = 131072
-        self.dim_size = 1024
+        self.num_tokens = 32768
+        self.total_head_num = 8
+        self.head_dim = 128
+
+        self.norm_head_start = 0
+        self.norm_head_num = 8
+        self.norm_head_end = self.norm_head_start + self.norm_head_num
+
+        self.eps = 1e-5
 
         # SRAM 48MB
         cache_size = 48 * (1024 ** 2)
@@ -19,21 +26,28 @@ class ExpOp:
     def create_tensors(self, max_data_cnt):
         all_tensor_list = []
         for _ in range(max_data_cnt):
-            src = torch.randn(
-                size=(self.batch_size, self.dim_size), 
-                dtype=torch.float16, 
+            token_data = torch.randn(
+                size=[self.num_tokens, self.total_head_num, self.head_dim], 
+                dtype=torch.bfloat16, 
+                device="hpu"
+            )
+            
+            weight = torch.randn(
+                size=[self.norm_head_num, self.head_dim], 
+                dtype=torch.bfloat16, 
                 device="hpu"
             )
 
-            dst = torch.randn(
-                size=(self.batch_size, self.dim_size), 
-                dtype=torch.float16, 
+            y = torch.randn(
+                size=[self.num_tokens, self.total_head_num, self.head_dim], 
+                dtype=torch.bfloat16, 
                 device="hpu"
             )
 
             tensors = {
-                'src': src,
-                'dst': dst
+                'token_data': token_data,
+                'weight': weight,
+                'y': y
             }
             all_tensor_list.append(tensors)
             ht.core.mark_step()
@@ -44,14 +58,30 @@ class ExpOp:
 
     def tensor_size(self):
         size=0
-        size += self.batch_size * self.dim_size * torch.float16.itemsize *2
+        size+=self.num_tokens*self.total_head_num*self.head_dim*torch.bfloat16.itemsize
+        size+=self.norm_head_num*self.head_dim*torch.bfloat16.itemsize
+        size+=self.num_tokens*self.total_head_num*self.head_dim*torch.bfloat16.itemsize
         return size
     
     def op(self, tensors):
-        src = tensors["src"]
-        dst = tensors["dst"]
-        torch.exp(src, out=dst)
-        return dst
+        # get pre-allocated input tensors
+        token_data = tensors["token_data"]
+        weight = tensors["weight"]
+
+        # get pre-allocated output tensors
+        y = tensors["y"]
+
+        # per head rms_norm
+        for head_idx in range(self.norm_head_num):
+            head_data = token_data[:, head_idx, :]
+            head_weight = weight[head_idx, :]
+            y[:, head_idx, :] = torch.nn.functional.rms_norm(
+                head_data, 
+                normalized_shape=head_weight.shape,
+                weight=head_weight,
+                eps=self.eps
+            )
+        return y
     
     def perf(self, iterations, profiling=False):
         if profiling:
@@ -98,5 +128,5 @@ class ExpOp:
         print(f"{latency_us=:.2f}")
     
 if __name__ == "__main__":
-    op = ExpOp()
+    op = HeadRMSNormOp()
     op.run()

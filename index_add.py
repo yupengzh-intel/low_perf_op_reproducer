@@ -116,13 +116,7 @@ class IndexAddOp:
         # warmup
         self.perf(2)
         latency_us = self.perf(32, profiling)
-        print("index_add:")
-        print(f"src_batch_size={self.src_batch_size}")
-        print(f"dst_batch_size={self.dst_batch_size}")
-        print(f"dim_size={self.dim_size}")
-        print(f"{latency_us=}")
-        mem_bw = self.tensor_size()/latency_us/1e3
-        print(f"mem_bw(GB/s)={mem_bw}")
+        print(f"{latency_us=:.2f}")
     
 if __name__ == "__main__":
     op = IndexAddOp()
