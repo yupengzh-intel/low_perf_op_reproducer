@@ -11,7 +11,7 @@ basic op
 | scatter |45130.37  |46.50  |
 | index_add |412.25  |193.57  |
 | softmax |108.09  |93.60  |
-| topk |4073.73  |184.29  |
+| topk |4073.73  |194.27  |
 
 mocked_model op
 
@@ -20,5 +20,5 @@ mocked_model op
 | rotary_embedding |513.27  |372.77  |
 | moe_quant_group_gemm |785.89  |983.55  |
 | moe_scatter_dynamic_quant |6517.79  |1287.46  |
-| moe_swiglu_dynamic_quant |3383.04  |1048.03  |
-| head_rms_norm |1050.74  |521.25  |
+| moe_swiglu_dynamic_quant |3383.04  |1066.56  |
+| head_rms_norm |1050.74  |522.37  |
