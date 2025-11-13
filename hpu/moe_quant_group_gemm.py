@@ -90,7 +90,9 @@ class MoeQuantGroupGemmOp:
     def create_tensors(self, max_data_cnt):
         all_tensor_list = []
         for _ in range(max_data_cnt):
-            scatter_tokens = torch.randn(
+            scatter_tokens = torch.randint(
+                low=-16, 
+                high=17,
                 size=[self.real_scatter_tokens, self.hidden_size], 
                 dtype=torch.int8, 
                 device="hpu"
@@ -102,7 +104,9 @@ class MoeQuantGroupGemmOp:
                 device="hpu"
             )
 
-            experts_weight = torch.randn(
+            experts_weight = torch.randint(
+                low=-16, 
+                high=17,
                 size=[self.total_experts_num, self.hidden_size, self.new_hidden_size], 
                 dtype=torch.int8, 
                 device="hpu"

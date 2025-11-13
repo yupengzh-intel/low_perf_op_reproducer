@@ -8,6 +8,7 @@ class CosOp:
         self.batch_size = 131072
         self.dim_size = 1024
 
+        # SRAM 96MB
         cache_size = 96 * (1024 ** 2)
         tensor_size = self.tensor_size()
         max_data_cnt = math.ceil(cache_size / tensor_size)

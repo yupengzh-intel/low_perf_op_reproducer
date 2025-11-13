@@ -9,8 +9,8 @@ class TopkOp:
         self.dim_size = 16384
         self.k = 16
 
-        # SRAM 48MB
-        cache_size = 48 * (1024 ** 2)
+        # SRAM 96MB
+        cache_size = 96 * (1024 ** 2)
         tensor_size = self.tensor_size()
         max_data_cnt = math.ceil(cache_size / tensor_size)
         self.tensor_list = self.create_tensors(max_data_cnt)
