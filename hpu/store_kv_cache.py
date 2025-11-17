@@ -16,8 +16,7 @@ def generate_prefill_data(
     return q_lens, accum_q_lens, cache_lens, cache_slot_ids, kv_lens
 
 
-
-class RotaryEmbeddingOp:
+class StoreKVCacheOp:
 
     def __init__(self, mode="prefill"):
         # pre-defined attrs
@@ -26,10 +25,7 @@ class RotaryEmbeddingOp:
         self.head_dim = 128
         self.total_head_num = self.q_head_num + 2 * self.kv_head_num
 
-        self.rope_offset = 0
-        self.rope_dim = 128
-
-        self.mode = mode
+        self.mode = "prefill"
         if self.mode == "prefill":
             # [q_seq_len, total_head_num, head_dim]
             self.batch_size = 1
@@ -60,19 +56,6 @@ class RotaryEmbeddingOp:
     def create_tensors(self, max_data_cnt):
         all_tensor_list = []
 
-        # return cos/sin
-        def precompute_freqs_cis(dim, max_seq_len, theta: float = 10000.0):
-            freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-            t = torch.arange(max_seq_len, device=freqs.device)
-            freqs = torch.outer(t, freqs).float()
-            freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
-            return torch.real(freqs_cis), torch.imag(freqs_cis)
-
-        cos_tensor, sin_tensor = precompute_freqs_cis(
-            self.rope_dim, 
-            self.max_kv_len
-        )
-        
         for _ in range(max_data_cnt):
             packed_qkv = torch.randn(
                 size=[self.num_tokens, self.total_head_num, self.head_dim], 
@@ -98,24 +81,51 @@ class RotaryEmbeddingOp:
                 device="hpu"
             )
 
-            cos = cos_tensor.to("hpu")
-
-            sin = sin_tensor.to("hpu")
-
-            y = torch.randn(
-                size=[self.num_tokens, self.total_head_num, self.head_dim],
-                dtype=torch.bfloat16,
+            cache_slot_ids = torch.tensor(
+                self.cache_slot_ids, 
+                dtype=torch.int32, 
                 device="hpu"
             )
+
+            k_cache = torch.randint(
+                low=-16,
+                high=17,
+                size=[self.batch_size, self.kv_head_num, self.max_kv_len, self.head_dim], 
+                dtype=torch.int8, 
+                device="hpu"
+            )
+
+            v_cache = torch.randint(
+                low=-16,
+                high=17,
+                size=[self.batch_size, self.kv_head_num, self.max_kv_len, self.head_dim], 
+                dtype=torch.int8, 
+                device="hpu"
+            )
+
+            k_scale = torch.ones(
+                size=[self.kv_head_num, self.head_dim],
+                dtype=torch.float32,
+                device="hpu"
+            )
+
+            v_scale = torch.ones(
+                [self.kv_head_num, self.head_dim],
+                dtype=torch.float32,
+                device="hpu"
+            )
+
 
             tensors = {
                 'packed_qkv': packed_qkv,
                 'q_lens': q_lens,
                 'accum_q_lens': accum_q_lens,
                 'cache_lens': cache_lens,
-                'cos': cos,
-                'sin': sin,
-                'y': y
+                'cache_slot_ids': cache_slot_ids,
+                'k_cache': k_cache,
+                'v_cache': v_cache,
+                'k_scale': k_scale,
+                'v_scale': v_scale
             }
             all_tensor_list.append(tensors)
             ht.core.mark_step()
@@ -139,14 +149,20 @@ class RotaryEmbeddingOp:
         # cache_lens: [batch_size], dtype=torch.int32
         size += len(self.cache_lens) * torch.int32.itemsize
         
-        # cos: [max_kv_len, rope_dim//2], dtype=torch.float32
-        size += self.max_kv_len * (self.rope_dim // 2) * torch.float32.itemsize
+        # cache_slot_ids: [batch_size], dtype=torch.int32
+        size += len(self.cache_slot_ids) * torch.int32.itemsize
         
-        # sin: [max_kv_len, rope_dim//2], dtype=torch.float32
-        size += self.max_kv_len * (self.rope_dim // 2) * torch.float32.itemsize
+        # k_cache: [batch_size, kv_head_num, max_kv_len, head_dim], dtype=torch.int8
+        size += self.batch_size * self.kv_head_num * self.max_kv_len * self.head_dim * torch.int8.itemsize
         
-        # y: [num_tokens, total_head_num, head_dim], dtype=torch.bfloat16
-        size += self.num_tokens * self.total_head_num * self.head_dim * torch.bfloat16.itemsize
+        # v_cache: [batch_size, kv_head_num, max_kv_len, head_dim], dtype=torch.int8
+        size += self.batch_size * self.kv_head_num * self.max_kv_len * self.head_dim * torch.int8.itemsize
+        
+        # k_scale: [kv_head_num, head_dim], dtype=torch.float32
+        size += self.kv_head_num * self.head_dim * torch.float32.itemsize
+        
+        # v_scale: [kv_head_num, head_dim], dtype=torch.float32
+        size += self.kv_head_num * self.head_dim * torch.float32.itemsize
         
         return size
     
@@ -156,52 +172,43 @@ class RotaryEmbeddingOp:
         q_lens = tensors["q_lens"]
         accum_q_lens = tensors["accum_q_lens"]
         cache_lens = tensors["cache_lens"]
-        cos = tensors["cos"]
-        sin = tensors["sin"]
-
-        # get pre-allocated output tensors
-        y = tensors["y"]
-
-
-        def rotate(qk, cos, sin):
-            # [q_seq_len, q_head_num + kv_head_num, head_dim]
-            x1 = qk[..., :self.rope_dim//2]
-            x2 = qk[..., self.rope_dim//2:]
-
-            cos = cos.unsqueeze(1)
-            sin = sin.unsqueeze(1)
-
-            x1_rot = x1 * cos - x2 * sin
-            x2_rot = x1 * sin + x2 * cos
-
-            return torch.cat([x1_rot, x2_rot], dim=-1)
-            
+        cache_slot_ids = tensors["cache_slot_ids"]
+        k_cache = tensors["k_cache"]
+        v_cache = tensors["v_cache"]
+        k_scale = tensors["k_scale"]
+        v_scale = tensors["v_scale"]
 
         # for each batch
         for batch_idx in range(self.batch_size):
             q_len = q_lens[batch_idx]
             q_offset = accum_q_lens[batch_idx]
             cur_cache_len = cache_lens[batch_idx]
+            cur_slot_id = cache_slot_ids[batch_idx]
 
             token_start = q_offset
             token_end = q_offset + q_len
 
-            qk_head_start = 0
-            qk_head_end = self.q_head_num + self.kv_head_num
-
-            dim_start = self.rope_offset
-            dim_end = self.rope_offset + self.rope_dim
+            k_head_start = self.q_head_num
+            k_head_end = self.q_head_num + self.kv_head_num
+            v_head_start = self.q_head_num + self.kv_head_num
+            v_head_end = self.q_head_num + self.kv_head_num * 2
 
             cache_start = cur_cache_len
             cache_end = cur_cache_len + q_len
 
-            y[token_start:token_end, qk_head_start:qk_head_end, dim_start:dim_end] = rotate(
-                packed_qkv[token_start:token_end, qk_head_start:qk_head_end, dim_start:dim_end], 
-                cos[cache_start : cache_end], 
-                sin[cache_start : cache_end]
-            )
+            # [num_tokens, total_head_num, head_dim]
+            # --> [q_len, kv_head_num, head_dim]
+            # --> [kv_head_num, q_len, head_dim]
+            cur_k = packed_qkv[token_start:token_end, k_head_start:k_head_end].transpose(0, 1)
+            cur_v = packed_qkv[token_start:token_end, v_head_start:v_head_end].transpose(0, 1)
 
-        return y
+            # [max_batch_size, total_head_num, max_seq_len, head_dim]
+            # --> [kv_head_num, q_len, head_dim]
+
+            k_cache[cur_slot_id, k_head_start:k_head_end, cache_start:cache_end] = torch.round(
+                torch.mul(cur_k, k_scale.unsqueeze(1))).type(torch.int8)
+            v_cache[cur_slot_id, v_head_start:v_head_end, cache_start:cache_end] = torch.round(
+                torch.mul(cur_v, v_scale.unsqueeze(1))).type(torch.int8)
     
     def perf(self, iterations, profiling=False):
         if profiling:
@@ -248,5 +255,5 @@ class RotaryEmbeddingOp:
         print(f"{latency_us=:.2f}")
     
 if __name__ == "__main__":
-    op = RotaryEmbeddingOp()
+    op = StoreKVCacheOp()
     op.run()
