@@ -87,4 +87,4 @@
 
 | Params | dtype | num_tokens | total_head_num | norm_head_start | norm_head_num | head_dim | HPU (us) | GPU (us) |
 |-|-|-|-|-|-|-|-|-|
-| Value | bfloat16 | 32768 | 8 | 0 | 8 | 128 | 644.49  |  |
+| Value | bfloat16 | 32768 | 8 | 0 | 8 | 128 | 644.49  | 167.80 |
