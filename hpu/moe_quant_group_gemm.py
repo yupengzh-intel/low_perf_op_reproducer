@@ -29,7 +29,7 @@ class MoeQuantGroupGemmOp:
         self.num_tokens = 8192
         self.hidden_size = 4096
         self.new_hidden_size = 2048
-        self.num_experts = 8
+        self.num_experts = 64
         self.topk = 4
         self.world_size = 8
         self.rank = 0

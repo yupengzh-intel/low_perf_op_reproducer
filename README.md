@@ -56,13 +56,13 @@
 
 | Params| dtype | mode | batch_size | q_seq_len | cache_len | q_head_num | kv_head_num | head_dim | rope_offset | rope_dim | HPU (us) | GPU (us) |
 |-|-|-|-|-|-|-|-|-|-|-|-|-|
-| Value | bfloat16 | prefill | 1 | 8192 | 0 | 8 | 1 | 128 | 0 | 128 | 513.27 (5849.536)  | 372.77 (626.08)  |
+| Value | bfloat16 | prefill | 1 | 8192 | 0 | 8 | 1 | 128 | 0 | 128 | 533.29  | 372.77  |
 
 ## moe_quant_group_gemm op
 
 | Params | dtype | dst_dtype | num_tokens | world_size | rank | num_shared_experts | dp_size | sp_size | num_experts | topk | ep_size | hidden_size | new_hidden_size | HPU (us) | GPU (us) |
 |-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
-| Value | int8 | bfloat16 | 8192 | 8 | 0 | 0 | 1 | 1 | 64 | 4 | 8 | 4096 | 2048 | 785.89 (3068.625)  | 983.55 (2001.28) |
+| Value | int8 | bfloat16 | 8192 | 8 | 0 | 0 | 1 | 1 | 64 | 4 | 8 | 4096 | 2048 | 3233.90  | 2010.69 |
 
 
 ## moe_scatter_dynamic_quant op
